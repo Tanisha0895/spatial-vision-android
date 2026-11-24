@@ -23,6 +23,7 @@ import android.widget.TextView
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
+import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
@@ -58,6 +59,9 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
     private var fpsT0 = 0L
     private var fps = 0f
     private var recognizer: SpeechRecognizer? = null
+    private var depthSupported = true
+    @Volatile private var trackingText = "starting"
+    @Volatile private var depthOk = false
 
     // ------------------------------------------------------------------ setup
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -146,7 +150,7 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
                 if (s.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
                     config.depthMode = Config.DepthMode.AUTOMATIC
                 } else {
-                    status.text = "This phone does not support ARCore Depth."
+                    depthSupported = false
                     guide.say("Sorry, this phone does not support depth measurement.")
                 }
                 config.focusMode = Config.FocusMode.AUTO
@@ -219,17 +223,22 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         s.setCameraTextureName(background.textureId)
         val frame = try { s.update() } catch (e: Exception) { return }
         if (frame.hasDisplayGeometryChanged()) depth.geometryDirty = true
+        if (frame.timestamp != 0L) depth.updateGeometry(frame)
         background.draw(frame)
 
         val now = SystemClock.uptimeMillis()
         frames++
         if (now - fpsT0 >= 1000) { fps = frames * 1000f / (now - fpsT0); frames = 0; fpsT0 = now }
 
-        val tracking = frame.camera.trackingState == TrackingState.TRACKING
+        val cam = frame.camera
+        val tracking = cam.trackingState == TrackingState.TRACKING
+        val reason = cam.trackingFailureReason
+        trackingText = if (tracking) "tracking" else "${cam.trackingState.name.lowercase()} (${reason.name.lowercase()})"
         if (now - lastDepthAt >= 100) {   // 10 distance updates per second
             lastDepthAt = now
             val r = if (tracking) depth.process(frame) else null
-            runOnUiThread { if (r != null) guide.update(r) else guide.noDepth() }
+            depthOk = r != null
+            runOnUiThread { if (r != null) guide.update(r) else guide.noDepth(hintFor(tracking, reason)) }
         }
         val det = detector
         val vm = depth.viewMap
@@ -247,6 +256,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         }
     }
 
+    private fun hintFor(tracking: Boolean, reason: TrackingFailureReason): String = when {
+        !depthSupported -> "This phone cannot measure distance."
+        tracking -> "Hold on, measuring distance. Move the phone slowly left and right."
+        reason == TrackingFailureReason.INSUFFICIENT_LIGHT -> "It is too dark. Please turn on a light."
+        reason == TrackingFailureReason.EXCESSIVE_MOTION -> "Moving too fast. Move the phone more slowly."
+        reason == TrackingFailureReason.INSUFFICIENT_FEATURES -> "Point the camera at the room, not at a plain wall, and move it slowly."
+        else -> "Move the phone slowly left and right."
+    }
+
     // ------------------------------------------------------------------ screen text (for sighted helpers)
     private fun m(v: Float) = if (v.isNaN() || v > 8f) "  —  " else String.format(Locale.US, "%.1f m", v)
 
@@ -254,12 +272,15 @@ class MainActivity : Activity(), GLSurfaceView.Renderer {
         val s = guide.sectors
         val lines = StringBuilder()
         if (guide.paused) lines.append("PAUSED\n")
-        if (s == null || !tracking) lines.append("Move the phone slowly left and right…\n")
+        if (!depthSupported) lines.append("This phone does not support ARCore Depth\n")
+        else if (s == null || !tracking) lines.append("Move the phone slowly left and right…\n")
         else lines.append("LEFT ${m(s.left)}   AHEAD ${m(s.ahead)}   RIGHT ${m(s.right)}\n")
         if (guide.lastAlert.isNotEmpty()) lines.append(guide.lastAlert).append('\n')
         val names = guide.named.joinToString(", ") { "${it.label} ${m(it.meters).trim()}" }
         if (names.isNotEmpty()) lines.append("Seen: ").append(names).append('\n')
-        lines.append(String.format(Locale.US, "%.0f FPS · YOLO %d ms", fps, detector?.lastMs ?: 0))
+        lines.append(String.format(Locale.US, "%.0f FPS · YOLO %s · AR %s · depth %s", fps,
+            if (detector == null) "off" else "${detector?.lastMs ?: 0} ms", trackingText,
+            if (!depthSupported) "unsupported" else if (depthOk) "ok" else "waiting"))
         status.text = lines.toString()
         val danger = s != null && (s.ahead < Guide.WARN_AHEAD) && !guide.paused
         status.setBackgroundColor(if (danger) Color.argb(220, 200, 30, 30) else Color.argb(200, 0, 0, 0))

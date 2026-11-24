@@ -88,6 +88,15 @@ class DepthAnalyzer {
     private var mapH = 0
     private var sector = IntArray(0)   // per depth pixel: 0/1/2 = left/ahead/right, -1 = not used
 
+    /** Called every camera frame: keeps the image->screen mapping current (needed by YOLO too). */
+    fun updateGeometry(frame: Frame) {
+        if (geometryDirty || viewMap == null) {
+            viewMap = ViewMap.from(frame)
+            geometryDirty = false
+            mapW = 0   // rebuild the sector table with the new mapping
+        }
+    }
+
     fun process(frame: Frame): Sectors? {
         val img = try {
             frame.acquireDepthImage16Bits()
@@ -99,12 +108,8 @@ class DepthAnalyzer {
         img.use {
             val w = it.width
             val h = it.height
-            if (geometryDirty || viewMap == null) {
-                viewMap = ViewMap.from(frame)
-                geometryDirty = false
-                mapW = 0
-            }
             if (w != mapW || h != mapH) buildSectors(w, h)
+            if (sector.size != w * h) return null   // mapping not ready yet: never index a wrong-size table
             val plane = it.planes[0]
             val buf = plane.buffer.order(ByteOrder.nativeOrder())
             val rowStride = plane.rowStride

@@ -116,11 +116,11 @@ class Guide(ctx: Context) : TextToSpeech.OnInitListener {
     }
 
     /** spoken when depth is not available yet (ARCore needs a little camera movement to start) */
-    fun noDepth() {
+    fun noDepth(hint: String) {
         val now = SystemClock.uptimeMillis()
-        if (now - startedAt > 4000 && now - lastSectorsAt > 3000 && now - lastHintAt > 8000 && !paused) {
+        if (now - startedAt > 6000 && now - lastSectorsAt > 3000 && now - lastHintAt > 8000 && !paused) {
             lastHintAt = now
-            say("I cannot measure distance yet. Move the phone slowly left and right.")
+            say(hint)
         }
     }
 

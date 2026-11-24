@@ -11,8 +11,8 @@ android {
         applicationId = "com.spatialvision.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     // Fixed key, so a newer APK installs over the old one without uninstalling.
